@@ -1,0 +1,9 @@
+Changes
+MANIFEST
+Makefile.PL
+MySQL.pm
+README
+t/00simple.t
+t/01fetch.pl
+t/02select.pl
+t/03csv.pl

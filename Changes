@@ -1,0 +1,20 @@
+Revision history for Perl extension Finance::Shares::MySQL.
+
+0.02	Sun Nov 10 11:20:51 GMT 2002
+	Now uses Date::Pcalc
+	Name changed from Stocks::MySQL
+	Constructor options now hash key/value format
+	Use of DBI_PASS and DBI_USER supported
+	Removed need for default log
+	'fetch' now checks database first
+	Extensive documentation changes
+	Added 'to_csv_file' method
+	Added 'present' method
+	'select_table' now returns array instead of hash
+	'print_table' re-written to accomodate data format changes
+	Support for alternative URLs
+
+0.01	Sun Oct 20 15:42:15 2002
+	- original version; created by h2xs 1.21 with options
+		-X -n Finance::Shares::MySQL
+
