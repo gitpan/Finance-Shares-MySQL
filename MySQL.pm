@@ -7,14 +7,14 @@ use LWP::UserAgent;
 use Finance::Shares::Log qw(:file :date);
 use Date::Pcalc qw(:all);
 require Exporter;
+use Carp;
 
 # Prototypes of local functions only
- sub search_array ($$;$);
  sub end_of_block ($$);
 
 # Global constants
 our $agent_name = 'Finance::Shares::MySQL';
-our $VERSION = 0.02;
+our $VERSION = 0.03;
 our @EXPORT_OK = qw(yahoo_uk);
 our $todaystr = today_as_string();
 
@@ -51,8 +51,8 @@ Fetch quotes listed in a file and inspect quotes for one share.
     Finance::Shares::MySQL->
 	print_requests( $failures, "next.req" );
 
-    my $table = $db->select_table( "BSY_L" );
-    Finance::Shares::print_table( $table, "BSY.csv" );
+    my $tbl = $db->select_table("BSY_L", [qw(qdate close)]);
+    Finance::Shares::print_table( $tbl, "BSY.csv" );
 
 =head1 DESCRIPTION
 
@@ -200,8 +200,8 @@ See L<yahoo_uk> for function details.
 
 sub DESTROY {
     my ($o) = @_;
-    $o->{dbh}->disconnect();
-    $o->{lf}->log(1, "Disconnected from mysql");
+    $o->{dbh}->disconnect() if $o->{dbh};
+    $o->{lf}->log(1, "Disconnected from mysql") if $o->{lf};
 }
 
 
@@ -235,12 +235,12 @@ sub fetch {
     return $failed unless ($start_day <= $end_day);
 
     ## Ensure table exists
-    unless (search_array($o->show("tables"), $table)) {
+    unless ($o->table_exists($table)) {
 	my $job = "create table $table ( qdate date not null, ";
 	$job   .= "open decimal(6,2), high decimal(6,2), low decimal(6,2), close decimal(6,2), ";
 	$job   .= "volume integer, primary key (qdate) )";
 	$o->{dbh}->do($job)
-	    or $o->{lf}->log(0, "Cannot create table \'$table\' : $o->{dbh}->errstr()\nStopped");
+	    or $o->{lf}->log(0, "Cannot create table \'$table\' : " . $o->{dbh}->errstr() . "\nStopped");
     }
     
     ## Identify any duplicates
@@ -287,7 +287,8 @@ sub fetch {
 			    $fields[0] = "\"$date\"";
 			    my $line = join(",", @fields);
 			    $o->{dbh}->do( "insert into $table (qdate, open, high, low, close, volume) values($line)" )
-				or $o->{lf}->log(0, "Cannot insert into table \'$table\' : $o->{dbh}->errstr()\nStopped");
+				or $o->{lf}->log(0, "Cannot insert into table \'$table\' : " 
+					. $o->{dbh}->errstr() . "\nStopped");
 			    $entered++;
 			}
 		    }
@@ -508,9 +509,10 @@ the following form, with items separated by spaces or commas.
 
 sub select_table {
     my ($o, $table, $colref, $start_date, $end_date) = @_;
+    croak "No table given.\nStopped" unless defined $table;
+    croak "'colref' not an array ref.\nStopped" unless ref($colref) eq 'ARRAY'; 
     $table =~ s/[^\w]/_/g;
-    $table = uc($table);
-    my $columns = $colref ? "qdate, " . join(", ", @$colref) : "*";
+    my $columns = join(", ", @$colref);
     my $where = $start_date ? qq(where qdate >= "$start_date") : "";
     $where .= ($where and $end_date) ? qq( and qdate <= "$end_date") : "";
     my $query = "select $columns from $table $where";
@@ -527,26 +529,27 @@ sub select_table {
 		return \@rows;
 	    }
 	} else {
-	    $o->{lf}->log(1, "ERROR - failed to execute query:\n\t\'$query\'");
+	    $o->{lf}->log(1, "ERROR - failed to execute query:\n\t\'$query\'\n\t" 
+		. $o->{dbh}->errstr() . "\nStopped");
 	}
     } else {
-	$o->{lf}->log(1, "ERROR - failed to prepare query:\n\t\'$query\'");
+	$o->{lf}->log(1, "ERROR - failed to prepare query:\n\t\'$query\'\n\t" 
+	    . $o->{dbh}->errstr() . "\nStopped");
     }
     return ();
 }
 
-=head2 select_table( table [, columns [, start [, end]] )
+=head2 select_table( table, columns [, start [, end] )
 
 =over 4
 
 =item C<table>
 
-Must be the name of a table in the database.
+Must be the name of a table in the database.  Note that this is B<case sensitive>.
 
 =item C<columns>
 
-A reference to an array holding column names.  Probably best specified as C<[qw(...)]>.  If omitted, all columns
-will be returned.
+A reference to an array holding column names.  Probably best specified as C<[qw(...)]>.
 
 =item C<start>
 
@@ -558,7 +561,7 @@ An optional end date in YYYY-MM-DD format.  Both dates are inclusive.
 
 =back
 
-Perform a SQL I<select> command on the database to extract a single table.  
+Perform a SQL I<select> command on the database to extract a single shares table.  
 
 If called in an array context, this returns two array refs.  The first is the list of columns requested (it is just the
 'columns' argument).  If this is undefined, all columns have been returned.  The second array holds arrayrefs
@@ -569,7 +572,7 @@ indicating each row of data.  In a scalar context, only the rows arrayref is ret
 To extract BP price data for the week beginning 5th August 2002.
 
     my ($rows, $cols) = 
-	$db->select_table('BP_L', [qw(open close)],
+	$db->select_table('BP_L', [qw(qdate open close)],
 		    '2002-08-05', '2002-08-09');
 
 $rows would hold the open and close values for the dates requested.
@@ -594,8 +597,8 @@ sub to_csv_file {
     my ($o, $epic, $start, $end, $file, $dir) = @_;
     $end = $todaystr unless (defined $end);
     $file = "$epic-$start-$end.csv" unless (defined $file);
-    my ($rows, $cols) = $o->select_table($epic, [qw(Open High Low Close Volume)], $start, $end);
-    Finance::Shares::MySQL::print_table($o, $rows, $cols, $file, $dir);
+    my ($rows, $cols) = $o->select_table($epic, [qw(Qdate Open High Low Close Volume)], $start, $end);
+    Finance::Shares::MySQL::print_table($rows, $cols, $file, $dir);
 }
 
 =head2 to_csv_file( epic, start, end [,file [,dir]] )
@@ -676,6 +679,31 @@ Return 1 if seems ok, 0 otherwise.
 
 =cut
 
+sub table_exists {
+    my ($o, $table) = @_;
+    croak "No table specified\nStopped" unless $table;
+    return search_array($o->show('tables'), $table) ? 1 : 0;
+}
+
+=head2 table_exists( table )
+
+Return 1 if the named table exists in the database, 0 if it does not.  Note that C<table> is case sensitive.
+
+=cut
+
+sub do_job {
+    my ($o, $job, $errmsg) = @_;
+    $errmsg = '' unless defined $errmsg;
+    $o->{dbh}->do($job)
+	or $o->{lf}->log(1, "ERROR - $errmsg :\n\t" . $o->{dbh}->errstr());
+}
+
+=head2 do_job( job [, errmsg] )
+
+Perform a 'do' call on the mysql database.  C<errmsg> prepends the database error report in the log file.
+
+=cut
+
 =head1 ACCESS METHODS
 
 =cut
@@ -749,12 +777,12 @@ Return the current default directory.
 
 =cut
 
-=head1 CLASS METHODS
+=head1 SUPPORT FUNCTIONS 
 
 =cut
 
 sub print_requests {
-    my ($class, $req, $file, $dir) = @_;
+    my ( $req, $file, $dir) = @_;
     $dir = File::Spec->curdir() unless $dir;
     my $fh;
     if ($file) {
@@ -796,7 +824,7 @@ written in a format that may be read by L<fetch_from_file()> for fetching later.
 =cut
 
 sub print_table {
-    my ($class, $rows, $cols, $file, $dir) = @_;
+    my ($rows, $cols, $file, $dir) = @_;
     $cols = [] unless defined($cols);
     $dir = File::Spec->curdir() unless $dir;
     my $fh;
@@ -807,7 +835,7 @@ sub print_table {
     
     if ($rows) {
 	if ($file) {
-	    print $fh join(",", ('', @$cols)) . "\n";
+	    print $fh join(',', @$cols) . "\n";
 	    foreach my $row (@$rows) {
 		print $fh join(",", (@$row)) . "\n";
 	    }
@@ -857,8 +885,6 @@ STDERR notice), otherwise the output is written to the file in CSV format.
 
 
 =head1 EXPORTED FUNCTIONS
-
-There should be no need to call this function externally, but it is made available for completeness.
 
     use Finance::Shares::MySQL qw(yahoo_uk);
 
@@ -913,11 +939,6 @@ This would return (on a single line, of course)
 
 ### PRIVATE FUNCTIONS
 
-# search_array( array_ref, string, [index] )
-# 'array_ref' should refer to an array of array references.  If 'index' is given, it is the position in the
-# subarray where 'string' is expected to be.
-# Return the sub-array (NOT ref) found or ().
-
 sub search_array ($$;$) {
     my ($ar, $value, $idx) = @_;
     $idx = 0 unless $idx;
@@ -926,15 +947,22 @@ sub search_array ($$;$) {
     }
     return ();
 }
+# =head2 search_array( array_ref, string, [index] )
 
-# $url = request_url( "BSY.L", "YYYY-MM-DD", "YYYY-MM-DD" );
-# Turn epic, start and end dates into a suitable url
+# C<array_ref> should refer to an array of array references.  If C<index> is given, it is the position in the
+# subarray where C<string> is expected to be.
+#
+# Return the sub-array (NOT ref) found or ().
+#
+# =cut
 
 sub end_of_block ($$) {
     my ($sd, $end_day) = @_;
     my $ed = $sd + 280;	    # 200 weekdays
     return ($ed < $end_day) ? $ed : $end_day;
 }
+# $url = request_url( "BSY.L", "YYYY-MM-DD", "YYYY-MM-DD" );
+# Turn epic, start and end dates into a suitable url
 
 =head1 BUGS
 
@@ -942,7 +970,7 @@ Please report those you find to the author.
 
 =head1 AUTHOR
 
-Chris Willmot, chris@willmot.org.uk
+Chris Willmot, chris@willmot.co.uk
 
 =head1 SEE ALSO
 

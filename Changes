@@ -1,5 +1,12 @@
 Revision history for Perl extension Finance::Shares::MySQL.
 
+0.03	Wed Nov 20 12:09:20 GMT 2002
+	Now carps
+	select_table() has no qdate column and is more general
+	Fixed mysterious DESTROY error
+	Added table_exists() as a method
+	Added do_job() to support Model storage
+
 0.02	Sun Nov 10 11:20:51 GMT 2002
 	Now uses Date::Pcalc
 	Name changed from Stocks::MySQL

@@ -5,6 +5,9 @@ This module fills requests for stock quotes.  It maintains a mysql database
 which is searched first.  The requested data is pulled in from the internet
 (!Yahoo CSV tables) if it isn't already there.
 
+It also provides methods allowing other Finance::Shares:: modules to store and
+retrieve information from their own tables.
+
 INSTALLATION
 
 To install this module type the following:
